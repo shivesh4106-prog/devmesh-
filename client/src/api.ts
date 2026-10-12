@@ -12,6 +12,7 @@ export interface Endpoint {
   name: string;
   slug: string;
   hmacSecret?: string;
+  contractSchema?: string | null;
   createdAt: string;
   _count?: { events: number };
 }
@@ -26,6 +27,8 @@ export interface WebhookEvent {
   sourceIp: string;
   hmacStatus: 'VERIFIED' | 'TAMPERED' | 'UNVERIFIED';
   schemaMutation: string | null;
+  contractStatus?: 'VALID' | 'VIOLATED' | 'NONE';
+  contractErrors?: string | null;
   traceId: string;
   receivedAt: string;
   replays?: ReplayLog[];
@@ -56,11 +59,62 @@ export interface Snippets {
   python: string;
 }
 
+export interface AnalyticsData {
+  summary: {
+    totalEvents: number;
+    sampleCount: number;
+    driftRatePercent: number;
+    verifiedRatePercent: number;
+    contractValidPercent: number;
+  };
+  hmac: {
+    verified: number;
+    tampered: number;
+    unverified: number;
+  };
+  contract: {
+    valid: number;
+    violated: number;
+    none: number;
+  };
+  drift: {
+    totalDriftEvents: number;
+    totalAddedFields: number;
+    totalRemovedFields: number;
+    totalMutatedTypes: number;
+  };
+  topEventTypes: { name: string; count: number }[];
+  timeline: { time: string; count: number }[];
+  replayChaos: {
+    totalReplays: number;
+    successfulReplays: number;
+    successRatePercent: number;
+    latencies: {
+      avg: number;
+      p50: number;
+      p90: number;
+      p99: number;
+      min: number;
+      max: number;
+    };
+    chaosBreakdown: Record<string, number>;
+  };
+}
+
 // Endpoints API
 export const endpointsApi = {
   list: () => api.get<Endpoint[]>('/endpoints'),
-  create: (data: { name: string; hmacSecret?: string }) => api.post<Endpoint>('/endpoints', data),
+  create: (data: { name: string; hmacSecret?: string; contractSchema?: string }) =>
+    api.post<Endpoint>('/endpoints', data),
+  update: (id: string, data: { name?: string; hmacSecret?: string; contractSchema?: string | null }) =>
+    api.patch<Endpoint>(`/endpoints/${id}`, data),
   delete: (id: string) => api.delete(`/endpoints/${id}`),
+};
+
+// Analytics API
+export const analyticsApi = {
+  get: (endpointId?: string) =>
+    api.get<AnalyticsData>(`/analytics${endpointId ? `?endpointId=${endpointId}` : ''}`),
 };
 
 // Events API

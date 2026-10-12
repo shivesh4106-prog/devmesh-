@@ -6,6 +6,7 @@ import {
   detectSchemaMutation,
   verifyHmac,
 } from '../services/webhookUtils';
+import { validateContract } from '../services/contractValidator';
 
 export const ingestRouter = Router();
 
@@ -45,6 +46,13 @@ ingestRouter.post('/:endpointId', async (req: Request, res: Response) => {
     // HMAC Verification
     const hmacStatus = verifyHmac(req.body as Buffer, headers, endpoint.hmacSecret);
 
+    // JSON Schema / OpenAPI Contract Validation
+    const { status: contractStatus, errors: contractErrorsList } = validateContract(
+      endpoint.contractSchema,
+      parsedBody
+    );
+    const contractErrors = contractErrorsList.length > 0 ? JSON.stringify(contractErrorsList) : null;
+
     // Sensitive Data Redaction
     const redactedBody = redactSensitiveFields(parsedBody);
 
@@ -79,6 +87,8 @@ ingestRouter.post('/:endpointId', async (req: Request, res: Response) => {
       sourceIp,
       hmacStatus,
       schemaMutation,
+      contractStatus,
+      contractErrors,
       traceId,
     });
 

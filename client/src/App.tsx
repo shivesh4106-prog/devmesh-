@@ -5,13 +5,14 @@ import {
   ShieldAlert, ShieldOff, AlertTriangle, Terminal,
   Code2, X, GitCompare, Activity, Globe, Clock, Wifi,
   WifiOff, Server, Layers, Eye, EyeOff, Play, Loader2,
-  Search, Download, Send, Sparkles, Edit3
+  Search, Download, Send, Sparkles, Edit3, BarChart3,
+  FileCheck, FileWarning, FileCode, CheckCircle, XCircle, Sliders
 } from 'lucide-react';
 import {
-  endpointsApi, eventsApi, replayApi, ingestApi
+  endpointsApi, eventsApi, replayApi, ingestApi, analyticsApi
 } from './api';
 import type {
-  Endpoint, WebhookEvent, ReplayLog, SchemaMutation, Snippets
+  Endpoint, WebhookEvent, ReplayLog, SchemaMutation, Snippets, AnalyticsData
 } from './api';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
@@ -157,6 +158,564 @@ function MutationPanel({ mutation }: { mutation: SchemaMutation }) {
   );
 }
 
+// ─── Contract Validation Badge & Panel ─────────────────────────────────────────
+function ContractBadge({ status }: { status?: string }) {
+  if (status === 'VALID') return (
+    <span className="badge badge-contract-valid" title="Payload passed JSON Schema contract"><FileCheck size={9} />CONTRACT PASS</span>
+  );
+  if (status === 'VIOLATED') return (
+    <span className="badge badge-contract-violated" title="Payload violated JSON Schema contract"><FileWarning size={9} />CONTRACT VIOLATED</span>
+  );
+  return null;
+}
+
+function ContractPanel({ errors, onOpenSchema }: { errors: string[] | null; onOpenSchema?: () => void }) {
+  if (!errors || errors.length === 0) return null;
+  return (
+    <div style={{
+      background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)',
+      borderRadius: 8, padding: 12, marginTop: 12
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ color: 'var(--accent-red)', fontWeight: 600, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <FileWarning size={13} /> Contract Violations Detected ({errors.length})
+        </div>
+        {onOpenSchema && (
+          <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 10 }} onClick={onOpenSchema}>
+            <Sliders size={10} /> View / Edit Schema
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {errors.map((err, idx) => (
+          <div key={idx} style={{
+            background: 'rgba(239,68,68,0.1)', padding: '4px 8px', borderRadius: 4,
+            fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: '#fca5a5'
+          }}>
+            ❌ {err}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Pre-built Contract Templates ─────────────────────────────────────────────
+const SCHEMA_TEMPLATES = [
+  {
+    id: 'github_push',
+    name: 'GitHub Push Webhook',
+    desc: 'Requires ref, repository name, and commits array',
+    schema: {
+      type: 'object',
+      required: ['ref', 'repository'],
+      properties: {
+        ref: { type: 'string' },
+        repository: {
+          type: 'object',
+          required: ['name'],
+          properties: {
+            name: { type: 'string' },
+            full_name: { type: 'string' },
+          },
+        },
+        commits: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'message'],
+            properties: {
+              id: { type: 'string' },
+              message: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    id: 'stripe_payment',
+    name: 'Stripe Payment Intent',
+    desc: 'Requires id, type, and data object with amount & currency',
+    schema: {
+      type: 'object',
+      required: ['id', 'type', 'data'],
+      properties: {
+        id: { type: 'string', pattern: '^evt_' },
+        type: { type: 'string' },
+        data: {
+          type: 'object',
+          required: ['object'],
+          properties: {
+            object: {
+              type: 'object',
+              required: ['amount', 'currency', 'status'],
+              properties: {
+                amount: { type: 'number', minimum: 1 },
+                currency: { type: 'string', minLength: 3, maxLength: 3 },
+                status: { type: 'string', enum: ['succeeded', 'processing', 'requires_payment_method'] },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    id: 'shopify_order',
+    name: 'Shopify Order Created',
+    desc: 'Requires id, total_price, currency, and line_items',
+    schema: {
+      type: 'object',
+      required: ['id', 'total_price', 'currency'],
+      properties: {
+        id: { type: 'number' },
+        email: { type: 'string' },
+        total_price: { type: 'string' },
+        currency: { type: 'string' },
+        financial_status: { type: 'string' },
+        line_items: { type: 'array' },
+      },
+    },
+  },
+  {
+    id: 'strict_minimal',
+    name: 'Custom Minimal Contract',
+    desc: 'Requires event name and timestamp format',
+    schema: {
+      type: 'object',
+      required: ['event', 'amount'],
+      properties: {
+        event: { type: 'string' },
+        amount: { type: 'number' },
+        timestamp: { type: 'string' },
+      },
+    },
+  },
+];
+
+// ─── Contract Schema Modal ────────────────────────────────────────────────────
+function ContractSchemaModal({
+  endpoint,
+  onClose,
+  onSaved,
+  onToast,
+}: {
+  endpoint: Endpoint;
+  onClose: () => void;
+  onSaved: (updatedEndpoint: Endpoint) => void;
+  onToast: (msg: string) => void;
+}) {
+  const [schemaText, setSchemaText] = useState(
+    endpoint.contractSchema ? formatJson(endpoint.contractSchema) : ''
+  );
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleApplyTemplate = (templateId: string) => {
+    setSelectedTemplate(templateId);
+    const tpl = SCHEMA_TEMPLATES.find((t) => t.id === templateId);
+    if (tpl) {
+      setSchemaText(JSON.stringify(tpl.schema, null, 2));
+      setError('');
+    }
+  };
+
+  const handleSave = async () => {
+    setError('');
+    if (schemaText.trim()) {
+      try {
+        JSON.parse(schemaText);
+      } catch (err: any) {
+        setError(`Invalid JSON syntax: ${err.message}`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      const res = await endpointsApi.update(endpoint.id, {
+        contractSchema: schemaText.trim() ? schemaText.trim() : null,
+      });
+      onSaved(res.data);
+      onToast(schemaText.trim() ? 'Contract schema saved!' : 'Contract schema cleared');
+      onClose();
+    } catch (err: any) {
+      setError(`Failed to save: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal fade-in"
+        style={{ maxWidth: 660, width: '92%' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FileCode size={18} style={{ color: 'var(--accent-cyan)' }} />
+            <h3 style={{ fontSize: 16, fontWeight: 700 }}>JSON Schema / OpenAPI Contract</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.5 }}>
+          Define the expected contract schema for <strong>{endpoint.name}</strong>. Incoming webhooks will be automatically validated against this specification, flagging breaking payload mutations.
+        </p>
+
+        {/* Templates Picker */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
+            QUICK CONTRACT TEMPLATES
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 6 }}>
+            {SCHEMA_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.id}
+                type="button"
+                className={`btn btn-secondary ${selectedTemplate === tpl.id ? 'active' : ''}`}
+                style={{
+                  fontSize: 11,
+                  padding: '6px 8px',
+                  justifyContent: 'flex-start',
+                  borderColor: selectedTemplate === tpl.id ? 'var(--accent-blue)' : undefined,
+                  background: selectedTemplate === tpl.id ? 'rgba(79,142,247,0.15)' : undefined,
+                }}
+                onClick={() => handleApplyTemplate(tpl.id)}
+              >
+                {tpl.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Schema Editor Textarea */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>
+              JSON SCHEMA DEFINITION (DRAFT 7 / 2020-12 / OPENAPI 3)
+            </label>
+            {schemaText && (
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: 10, padding: '2px 6px' }}
+                onClick={() => {
+                  setSchemaText('');
+                  setSelectedTemplate('');
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <textarea
+            className="dm-input font-mono"
+            rows={10}
+            style={{ fontSize: 11, resize: 'vertical' }}
+            placeholder={`{\n  "type": "object",\n  "required": ["event", "amount"],\n  "properties": {\n    "event": { "type": "string" },\n    "amount": { "type": "number" }\n  }\n}`}
+            value={schemaText}
+            onChange={(e) => setSchemaText(e.target.value)}
+          />
+        </div>
+
+        {error && (
+          <div style={{ padding: '8px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: 'var(--accent-red)', fontSize: 12, marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCheck size={13} />}
+            {saving ? 'Saving...' : 'Save Contract Schema'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Analytics & Performance Metrics Modal ────────────────────────────────────
+function AnalyticsDashboardModal({
+  endpoints,
+  selectedEndpointId,
+  onClose,
+}: {
+  endpoints: Endpoint[];
+  selectedEndpointId?: string | null;
+  onClose: () => void;
+}) {
+  const [filterEndpoint, setFilterEndpoint] = useState<string>(selectedEndpointId || 'all');
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAnalytics = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await analyticsApi.get(filterEndpoint === 'all' ? undefined : filterEndpoint);
+      setData(res.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [filterEndpoint]);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal fade-in"
+        style={{ maxWidth: 880, width: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8,
+              background: 'linear-gradient(135deg, #06b6d4, #3b82f6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              <BarChart3 size={17} style={{ color: 'white' }} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Analytics & Performance Metrics</h3>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                System-wide ingestion volume, cryptographic security, contract health, and chaos latencies
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <select
+              className="dm-input"
+              style={{ width: 'auto', height: 30, fontSize: 11, padding: '2px 8px' }}
+              value={filterEndpoint}
+              onChange={(e) => setFilterEndpoint(e.target.value)}
+            >
+              <option value="all">All Endpoints</option>
+              {endpoints.map((ep) => (
+                <option key={ep.id} value={ep.id}>
+                  {ep.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn btn-secondary" style={{ padding: '4px 8px' }} onClick={fetchAnalytics} title="Refresh metrics">
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            </button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Content Body */}
+        <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4 }}>
+          {loading && !data ? (
+            <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
+              <Loader2 size={24} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
+              Loading real-time performance analytics...
+            </div>
+          ) : !data ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+              Failed to load metrics data.
+            </div>
+          ) : (
+            <>
+              {/* KPI Stat Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>TOTAL WEBHOOKS</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: 'var(--text-primary)', fontFamily: 'JetBrains Mono, monospace' }}>
+                    {data.summary.totalEvents}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--accent-blue)', marginTop: 2 }}>Sampled: {data.summary.sampleCount}</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>VERIFIED RATIO</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: 'var(--accent-green)', fontFamily: 'JetBrains Mono, monospace' }}>
+                    {data.summary.verifiedRatePercent}%
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{data.hmac.verified} verified / {data.hmac.tampered} tampered</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>CONTRACT HEALTH</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: 'var(--accent-cyan)', fontFamily: 'JetBrains Mono, monospace' }}>
+                    {data.summary.contractValidPercent}%
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{data.contract.valid} valid / {data.contract.violated} violated</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>SCHEMA DRIFT</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: 'var(--accent-yellow)', fontFamily: 'JetBrains Mono, monospace' }}>
+                    {data.summary.driftRatePercent}%
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{data.drift.totalDriftEvents} mutated events</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.05em' }}>AVG LATENCY</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: 'var(--accent-purple)', fontFamily: 'JetBrains Mono, monospace' }}>
+                    {data.replayChaos.latencies.avg}ms
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>p50: {data.replayChaos.latencies.p50}ms | p90: {data.replayChaos.latencies.p90}ms</div>
+                </div>
+              </div>
+
+              {/* Grid 2: Traffic Timeline & Cryptographic Breakdown */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12, marginBottom: 12 }}>
+                {/* Traffic Activity Timeline */}
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>THROUGHPUT VOLUME TIMELINE</div>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Recent activity</span>
+                  </div>
+                  {data.timeline.length === 0 ? (
+                    <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>No activity recorded yet</div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'flex-end', height: 90, gap: 8, paddingTop: 10 }}>
+                      {data.timeline.map((item, idx) => {
+                        const maxCount = Math.max(...data.timeline.map(t => t.count), 1);
+                        const heightPct = Math.max((item.count / maxCount) * 100, 15);
+                        return (
+                          <div key={idx} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%' }}>
+                            <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end', width: '100%' }}>
+                              <div
+                                style={{
+                                  width: '100%',
+                                  height: `${heightPct}%`,
+                                  background: 'linear-gradient(180deg, #4f8ef7, #1e3a8a)',
+                                  borderRadius: '4px 4px 0 0',
+                                  transition: 'height 0.3s ease'
+                                }}
+                                title={`${item.time}: ${item.count} events`}
+                              />
+                            </div>
+                            <span style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'JetBrains Mono, monospace' }}>
+                              {item.time}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Cryptographic Security Distribution */}
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    HMAC SIGNATURE AUDIT
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                        <span style={{ color: 'var(--accent-green)' }}>Verified Signatures</span>
+                        <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>{data.hmac.verified}</span>
+                      </div>
+                      <div style={{ height: 6, background: 'var(--bg-card)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${data.summary.sampleCount > 0 ? (data.hmac.verified / data.summary.sampleCount) * 100 : 0}%`, background: 'var(--accent-green)' }} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                        <span style={{ color: 'var(--accent-red)' }}>Tampered Signatures</span>
+                        <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>{data.hmac.tampered}</span>
+                      </div>
+                      <div style={{ height: 6, background: 'var(--bg-card)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${data.summary.sampleCount > 0 ? (data.hmac.tampered / data.summary.sampleCount) * 100 : 0}%`, background: 'var(--accent-red)' }} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Unverified / No Secret</span>
+                        <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>{data.hmac.unverified}</span>
+                      </div>
+                      <div style={{ height: 6, background: 'var(--bg-card)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${data.summary.sampleCount > 0 ? (data.hmac.unverified / data.summary.sampleCount) * 100 : 0}%`, background: 'var(--text-muted)' }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid 3: Contract Health & Top Event Types */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {/* Contract Compliance */}
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    JSON SCHEMA CONTRACT COMPLIANCE
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <div style={{ flex: 1, background: 'var(--bg-card)', padding: '8px 10px', borderRadius: 6, textAlign: 'center' }}>
+                      <div style={{ fontSize: 9, color: 'var(--accent-green)' }}>PASSED</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent-green)' }}>{data.contract.valid}</div>
+                    </div>
+                    <div style={{ flex: 1, background: 'var(--bg-card)', padding: '8px 10px', borderRadius: 6, textAlign: 'center' }}>
+                      <div style={{ fontSize: 9, color: 'var(--accent-red)' }}>VIOLATIONS</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent-red)' }}>{data.contract.violated}</div>
+                    </div>
+                    <div style={{ flex: 1, background: 'var(--bg-card)', padding: '8px 10px', borderRadius: 6, textAlign: 'center' }}>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>UNCONFIGURED</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>{data.contract.none}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    Endpoints with configured contracts validate payloads against standard Draft-7 / OpenAPI schemas.
+                  </div>
+                </div>
+
+                {/* Top Event Types */}
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                    TOP WEBHOOK TOPICS & EVENT TYPES
+                  </div>
+                  {data.topEventTypes.length === 0 ? (
+                    <div style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'center', padding: 20 }}>No event topics yet</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {data.topEventTypes.map((t) => {
+                        const pct = Math.round((t.count / data.summary.sampleCount) * 100);
+                        return (
+                          <div key={t.name}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
+                              <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent-cyan)' }}>{t.name}</span>
+                              <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{t.count} ({pct}%)</span>
+                            </div>
+                            <div style={{ height: 4, background: 'var(--bg-card)', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent-cyan)' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Diff Modal ───────────────────────────────────────────────────────────────
 function DiffModal({ events, onClose }: { events: WebhookEvent[]; onClose: () => void }) {
   const [left, setLeft] = useState(0);
@@ -281,13 +840,15 @@ function SnippetViewer({ eventId, onCopy }: { eventId: string; onCopy: (msg: str
 
 // ─── Inspector Panel ──────────────────────────────────────────────────────────
 function InspectorPanel({
-  event, onCopy, onDelete
+  event, endpoint, onCopy, onDelete, onOpenContractModal
 }: {
   event: WebhookEvent | null;
+  endpoint?: Endpoint | null;
   onCopy: (msg: string) => void;
   onDelete?: (id: string) => void;
+  onOpenContractModal?: () => void;
 }) {
-  const [tab, setTab] = useState<'payload' | 'headers' | 'snippets'>('payload');
+  const [tab, setTab] = useState<'payload' | 'headers' | 'contract' | 'snippets'>('payload');
   const [showRedacted, setShowRedacted] = useState(true);
 
   useEffect(() => { if (event) setTab('payload'); }, [event?.id]);
@@ -320,9 +881,18 @@ function InspectorPanel({
     catch { return null; }
   })();
 
+  const contractErrorsList: string[] = (() => {
+    try {
+      return event.contractErrors ? JSON.parse(event.contractErrors) : [];
+    } catch {
+      return event.contractErrors ? [event.contractErrors] : [];
+    }
+  })();
+
   const tabs = [
     { id: 'payload' as const, label: 'Payload' },
     { id: 'headers' as const, label: 'Headers' },
+    { id: 'contract' as const, label: `Contract${event.contractStatus === 'VIOLATED' ? ' (!)' : ''}` },
     { id: 'snippets' as const, label: 'Code Gen' },
   ];
 
@@ -339,6 +909,7 @@ function InspectorPanel({
             {event.method}
           </span>
           <HmacBadge status={event.hmacStatus} />
+          <ContractBadge status={event.contractStatus} />
           <MutationBadge mutation={mutation} />
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
             <button className="btn btn-secondary" style={{ padding: '3px 8px', fontSize: 11 }}
@@ -401,6 +972,9 @@ function InspectorPanel({
             </div>
             <pre className="code-block" style={{ maxHeight: 280 }}
               dangerouslySetInnerHTML={{ __html: syntaxHighlight(formatJson(parsedBody)) }} />
+            {contractErrorsList.length > 0 && (
+              <ContractPanel errors={contractErrorsList} onOpenSchema={onOpenContractModal} />
+            )}
             {mutation && <MutationPanel mutation={mutation} />}
           </>
         )}
@@ -427,6 +1001,76 @@ function InspectorPanel({
               ))}
             </div>
           </>
+        )}
+
+        {tab === 'contract' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  JSON SCHEMA / OPENAPI CONTRACT VALIDATION
+                </span>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  Evaluated against endpoint contract specification
+                </div>
+              </div>
+              <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 11 }} onClick={onOpenContractModal}>
+                <Sliders size={12} /> Configure Schema
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>CONTRACT STATUS</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700 }}>
+                  {event.contractStatus === 'VALID' && <span style={{ color: 'var(--accent-green)' }}><CheckCircle size={14} style={{ display: 'inline', marginRight: 4 }} />Valid & Compliant</span>}
+                  {event.contractStatus === 'VIOLATED' && <span style={{ color: 'var(--accent-red)' }}><XCircle size={14} style={{ display: 'inline', marginRight: 4 }} />Contract Violated</span>}
+                  {(!event.contractStatus || event.contractStatus === 'NONE') && <span style={{ color: 'var(--text-muted)' }}>No Schema Defined</span>}
+                </div>
+              </div>
+
+              <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>VIOLATIONS COUNT</div>
+                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: contractErrorsList.length > 0 ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                  {contractErrorsList.length}
+                </div>
+              </div>
+            </div>
+
+            {contractErrorsList.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-red)', marginBottom: 6 }}>
+                  VIOLATION DETAILS:
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {contractErrorsList.map((err, i) => (
+                    <div key={i} style={{
+                      background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
+                      padding: '8px 12px', borderRadius: 6, fontSize: 11, color: '#fca5a5',
+                      fontFamily: 'JetBrains Mono, monospace'
+                    }}>
+                      ❌ {err}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
+                ACTIVE ENDPOINT SCHEMA:
+              </div>
+              {endpoint?.contractSchema ? (
+                <pre className="code-block" style={{ maxHeight: 200, fontSize: 11 }}>
+                  {formatJson(endpoint.contractSchema)}
+                </pre>
+              ) : (
+                <div style={{ padding: 24, textAlign: 'center', background: 'var(--bg-secondary)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12 }}>
+                  No JSON Schema configured for this endpoint yet. Click <strong>Configure Schema</strong> above to set validation rules.
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {tab === 'snippets' && (
@@ -752,7 +1396,7 @@ function ReplayChaosPanel({
 // ─── Event Feed Panel ─────────────────────────────────────────────────────────
 function EventFeedPanel({
   endpoint, events, selectedEventId, onSelect, onRefresh,
-  onOpenSimulate, onClearAll, onCopy
+  onOpenSimulate, onOpenContractModal, onClearAll, onCopy
 }: {
   endpoint: Endpoint;
   events: WebhookEvent[];
@@ -760,6 +1404,7 @@ function EventFeedPanel({
   onSelect: (ev: WebhookEvent) => void;
   onRefresh: () => void;
   onOpenSimulate: () => void;
+  onOpenContractModal?: () => void;
   onClearAll: () => void;
   onCopy: (msg: string) => void;
 }) {
@@ -816,6 +1461,13 @@ function EventFeedPanel({
             onClick={onOpenSimulate}>
             <Sparkles size={11} />Simulate
           </button>
+          {onOpenContractModal && (
+            <button className="btn btn-secondary" style={{ padding: '3px 8px', fontSize: 11 }}
+              title="Configure JSON Schema contract"
+              onClick={onOpenContractModal}>
+              <FileCode size={11} />Contract
+            </button>
+          )}
           {events.length > 0 && (
             <>
               <button className="btn btn-secondary" style={{ padding: '3px 6px', fontSize: 11 }}
@@ -1303,7 +1955,6 @@ function CreateEndpointModal({ onClose, onCreate }: {
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [selectedEndpoint, setSelectedEndpoint] = useState<Endpoint | null>(null);
@@ -1312,6 +1963,8 @@ export default function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showSimulateModal, setShowSimulateModal] = useState(false);
   const [showDiffModal, setShowDiffModal] = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
   const [connected, setConnected] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [loadingEvents, setLoadingEvents] = useState(false);
@@ -1501,6 +2154,15 @@ export default function App() {
             }
           </div>
 
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: 11, borderColor: 'rgba(6,182,212,0.4)', color: 'var(--accent-cyan)' }}
+            onClick={() => setShowAnalyticsModal(true)}
+            title="View system metrics and throughput analytics"
+          >
+            <BarChart3 size={13} />Metrics & Analytics
+          </button>
+
           {selectedEndpoint && (
             <button className="btn btn-primary" style={{ fontSize: 12, background: 'linear-gradient(135deg, #f97316, #ef4444)' }}
               onClick={() => setShowSimulateModal(true)}>
@@ -1550,9 +2212,10 @@ export default function App() {
                   fontSize: 12, fontWeight: 500, color: 'var(--text-primary)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
                 }}>{ep.name}</div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  {ep._count?.events || 0} events
-                  {ep.hmacSecret && <span style={{ marginLeft: 6 }}><Shield size={8} style={{ display: 'inline' }} /></span>}
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>{ep._count?.events || 0} events</span>
+                  {ep.contractSchema && <span title="Contract Schema configured" style={{ color: 'var(--accent-cyan)' }}><FileCode size={9} style={{ display: 'inline' }} /></span>}
+                  {ep.hmacSecret && <span title="HMAC Secret configured"><Shield size={8} style={{ display: 'inline' }} /></span>}
                 </div>
               </div>
               <button
@@ -1582,6 +2245,7 @@ export default function App() {
                   onSelect={handleEventSelect}
                   onRefresh={() => loadEvents(selectedEndpoint.id)}
                   onOpenSimulate={() => setShowSimulateModal(true)}
+                  onOpenContractModal={() => setShowContractModal(true)}
                   onClearAll={handleClearAll}
                   onCopy={showToast}
                 />
@@ -1602,7 +2266,13 @@ export default function App() {
                 )}
               </div>
               <div style={{ flex: 1, overflow: 'hidden' }}>
-                <InspectorPanel event={selectedEvent} onCopy={showToast} onDelete={handleDeleteEvent} />
+                <InspectorPanel
+                  event={selectedEvent}
+                  endpoint={selectedEndpoint}
+                  onCopy={showToast}
+                  onDelete={handleDeleteEvent}
+                  onOpenContractModal={() => setShowContractModal(true)}
+                />
               </div>
             </div>
 
@@ -1663,6 +2333,26 @@ export default function App() {
 
       {showDiffModal && selectedEndpoint && (
         <DiffModal events={events} onClose={() => setShowDiffModal(false)} />
+      )}
+
+      {showContractModal && selectedEndpoint && (
+        <ContractSchemaModal
+          endpoint={selectedEndpoint}
+          onClose={() => setShowContractModal(false)}
+          onSaved={(updated) => {
+            setSelectedEndpoint(updated);
+            setEndpoints(prev => prev.map(ep => ep.id === updated.id ? updated : ep));
+          }}
+          onToast={showToast}
+        />
+      )}
+
+      {showAnalyticsModal && (
+        <AnalyticsDashboardModal
+          endpoints={endpoints}
+          selectedEndpointId={selectedEndpoint?.id}
+          onClose={() => setShowAnalyticsModal(false)}
+        />
       )}
 
       {toast && <Toast msg={toast} onClose={() => setToast(null)} />}

@@ -19,15 +19,41 @@ endpointRouter.get('/', async (_req: Request, res: Response) => {
 
 // Create endpoint
 endpointRouter.post('/', async (req: Request, res: Response) => {
-  const { name, hmacSecret } = req.body;
+  const { name, hmacSecret, contractSchema } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   try {
     const slug = uuidv4().split('-')[0];
     const endpoint = await prisma.endpoint.create({
-      data: { id: uuidv4(), name, slug, hmacSecret: hmacSecret || null },
+      data: {
+        id: uuidv4(),
+        name,
+        slug,
+        hmacSecret: hmacSecret || null,
+        contractSchema: contractSchema || null,
+      },
     });
     return res.status(201).json(endpoint);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Update endpoint (e.g. name, hmacSecret, contractSchema)
+endpointRouter.patch('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const { name, hmacSecret, contractSchema } = req.body;
+    const updated = await prisma.endpoint.update({
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(hmacSecret !== undefined && { hmacSecret }),
+        ...(contractSchema !== undefined && { contractSchema }),
+      },
+      include: { _count: { select: { events: true } } },
+    });
+    return res.json(updated);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

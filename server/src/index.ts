@@ -7,6 +7,7 @@ import { ingestRouter } from './routes/ingest';
 import { replayRouter } from './routes/replay';
 import { endpointRouter } from './routes/endpoints';
 import { eventsRouter } from './routes/events';
+import { analyticsRouter } from './routes/analytics';
 import { setSocketIO } from './services/socketService';
 import { startBufferDrainer } from './services/bufferService';
 
@@ -36,6 +37,7 @@ app.use('/api/v1/ingest', ingestRouter);
 app.use('/api/v1/replay', replayRouter);
 app.use('/api/v1/endpoints', endpointRouter);
 app.use('/api/v1/events', eventsRouter);
+app.use('/api/v1/analytics', analyticsRouter);
 
 // Root status & landing page (helps users navigating directly to port 3001)
 app.get('/', (_req, res) => {

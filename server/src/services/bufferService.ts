@@ -13,6 +13,8 @@ interface BufferedEvent {
   sourceIp: string;
   hmacStatus: string;
   schemaMutation: string | null;
+  contractStatus: string;
+  contractErrors: string | null;
   traceId: string;
 }
 
@@ -45,6 +47,8 @@ export async function startBufferDrainer() {
             sourceIp: ev.sourceIp,
             hmacStatus: ev.hmacStatus,
             schemaMutation: ev.schemaMutation,
+            contractStatus: ev.contractStatus,
+            contractErrors: ev.contractErrors,
             traceId: ev.traceId,
           },
         });
@@ -56,6 +60,8 @@ export async function startBufferDrainer() {
           method: ev.method,
           hmacStatus: ev.hmacStatus,
           schemaMutation: ev.schemaMutation ? JSON.parse(ev.schemaMutation) : null,
+          contractStatus: ev.contractStatus,
+          contractErrors: ev.contractErrors ? JSON.parse(ev.contractErrors) : null,
           traceId: ev.traceId,
           receivedAt: new Date().toISOString(),
           redactedBody: JSON.parse(ev.redactedBody),

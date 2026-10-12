@@ -14,10 +14,11 @@ model Endpoint {
   id          String         @id @default(uuid())
   name        String
   slug        String         @unique
-  hmacSecret  String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  events      WebhookEvent[]
+  hmacSecret     String?
+  contractSchema String?        @db.LongText
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  events         WebhookEvent[]
 
   @@map("endpoints")
 }
@@ -33,6 +34,8 @@ model WebhookEvent {
   sourceIp        String?
   hmacStatus      String       @default("UNVERIFIED")  // VERIFIED | TAMPERED | UNVERIFIED
   schemaMutation  String?      @db.Text                // JSON string of mutation diff
+  contractStatus  String       @default("NONE")        // VALID | VIOLATED | NONE
+  contractErrors  String?      @db.Text                // JSON string array of validation errors
   traceId         String       @unique
   receivedAt      DateTime     @default(now())
   replays         ReplayLog[]

@@ -59,6 +59,20 @@
 - Side-by-side **Payload Diff Comparator** to contrast any two captured events.
 - Single-click export of payloads or full endpoint event logs as JSON.
 
+### 8. 📜 JSON Schema & OpenAPI Contract Testing
+- Define custom or pre-templated **JSON Schema / OpenAPI 3 specifications** per endpoint (GitHub, Stripe, Shopify, custom contracts).
+- Real-time Ajv validator automatically flags contract violations (`CONTRACT PASS` vs `CONTRACT VIOLATED`) with specific field errors.
+- Visual contract violations panel and dedicated Contract inspector tab.
+
+### 9. 📊 Analytics & Performance Metrics Dashboard
+- Interactive system-wide & per-endpoint analytics modal with real-time KPI metrics:
+  - Total webhook volume and throughput timeline intervals.
+  - Cryptographic HMAC verification ratio (Verified vs Tampered vs Unverified).
+  - Schema contract compliance rates.
+  - Schema drift percentage and mutation field counters.
+  - Upstream chaos latency distribution ($p50, p90, p99$, average).
+  - Breakdown of top webhook topics and event types.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -125,8 +139,10 @@ You can run automated test webhooks directly to see events stream live into the 
 | `GET` | `/health` / `/api/v1/health` | Service health status check |
 | `POST` | `/api/v1/ingest/:endpointId` | High-speed webhook ingest (returns 202) |
 | `GET` | `/api/v1/endpoints` | List all webhook endpoints |
-| `POST` | `/api/v1/endpoints` | Create endpoint (`name`, `hmacSecret`) |
+| `POST` | `/api/v1/endpoints` | Create endpoint (`name`, `hmacSecret`, `contractSchema`) |
+| `PATCH` | `/api/v1/endpoints/:id` | Update endpoint configuration / contract schema |
 | `DELETE` | `/api/v1/endpoints/:id` | Delete endpoint |
+| `GET` | `/api/v1/analytics` | Real-time performance & audit metrics |
 | `GET` | `/api/v1/events/endpoint/:endpointId` | List events for an endpoint |
 | `GET` | `/api/v1/events/:id` | Get event details with replay history |
 | `GET` | `/api/v1/events/:id/snippets` | Generate cURL, Node.js, Python snippets |
