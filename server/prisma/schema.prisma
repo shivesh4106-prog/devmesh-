@@ -1,0 +1,60 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Endpoint {
+  id          String         @id @default(uuid())
+  name        String
+  slug        String         @unique
+  hmacSecret  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  events      WebhookEvent[]
+
+  @@map("endpoints")
+}
+
+model WebhookEvent {
+  id              String       @id @default(uuid())
+  endpointId      String
+  endpoint        Endpoint     @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  method          String       @default("POST")
+  headers         String       @db.Text
+  rawBody         String       @db.LongText
+  redactedBody    String       @db.LongText
+  sourceIp        String?
+  hmacStatus      String       @default("UNVERIFIED")  // VERIFIED | TAMPERED | UNVERIFIED
+  schemaMutation  String?      @db.Text                // JSON string of mutation diff
+  traceId         String       @unique
+  receivedAt      DateTime     @default(now())
+  replays         ReplayLog[]
+
+  @@index([endpointId])
+  @@index([receivedAt])
+  @@map("webhook_events")
+}
+
+model ReplayLog {
+  id             String       @id @default(uuid())
+  eventId        String
+  event          WebhookEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  targetUrl      String
+  delayMs        Int          @default(0)
+  chaosMode      String?      // "timeout" | "error429" | "error504" | null
+  responseStatus Int?
+  responseBody   String?      @db.Text
+  latencyMs      Int?
+  success        Boolean      @default(false)
+  replayedAt     DateTime     @default(now())
+
+  @@index([eventId])
+  @@map("replay_logs")
+}

@@ -1,0 +1,28 @@
+{
+  "name": "devmesh-monorepo",
+  "version": "1.0.0",
+  "description": "DevMesh — Real-Time Webhook Ingestion, Inspection & Chaos Platform",
+  "private": true,
+  "scripts": {
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "build:server": "npm run build --prefix server",
+    "build:client": "npm run build --prefix client",
+    "build": "npm run build:server && npm run build:client",
+    "prisma:generate": "npm run prisma:generate --prefix server",
+    "prisma:push": "npm run prisma:push --prefix server",
+    "prisma:studio": "npm run prisma:studio --prefix server"
+  },
+  "keywords": [
+    "webhooks",
+    "chaos-engineering",
+    "hmac",
+    "schema-drift",
+    "inspector",
+    "replay"
+  ],
+  "author": "DevMesh",
+  "license": "MIT"
+}
