@@ -1338,7 +1338,20 @@ export default function App() {
     try {
       const r = await eventsApi.listByEndpoint(endpointId);
       setEvents(r.data);
-    } catch { setEvents([]); }
+      if (r.data.length > 0) {
+        try {
+          const detail = await eventsApi.get(r.data[0].id);
+          setSelectedEvent(detail.data);
+        } catch {
+          setSelectedEvent(r.data[0]);
+        }
+      } else {
+        setSelectedEvent(null);
+      }
+    } catch {
+      setEvents([]);
+      setSelectedEvent(null);
+    }
     finally { setLoadingEvents(false); }
   }, []);
 
@@ -1347,7 +1360,6 @@ export default function App() {
   useEffect(() => {
     if (selectedEndpoint) {
       loadEvents(selectedEndpoint.id);
-      setSelectedEvent(null);
     }
   }, [selectedEndpoint?.id]);
 
@@ -1362,6 +1374,7 @@ export default function App() {
     socket.on('new_event', (data: WebhookEvent) => {
       if (selectedEndpoint && data.endpointId === selectedEndpoint.id) {
         setEvents(prev => [data, ...prev].slice(0, 100));
+        setSelectedEvent(prev => prev ?? data);
         // Update endpoint event count
         setEndpoints(prev => prev.map(ep =>
           ep.id === data.endpointId
