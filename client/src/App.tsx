@@ -1768,7 +1768,11 @@ function SimulateWebhookModal({
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message);
+      if (err.message === 'Network Error' || !err.response) {
+        setError('Network Error: Unable to reach backend on port 3001. Please verify the backend server is active.');
+      } else {
+        setError(err.response?.data?.error || err.message);
+      }
     } finally {
       setLoading(false);
     }

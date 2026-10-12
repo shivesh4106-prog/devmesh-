@@ -18,14 +18,18 @@ const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: CLIENT_URL,
+    origin: '*',
     methods: ['GET', 'POST'],
   },
 });
 
 setSocketIO(io);
 
-app.use(cors({ origin: CLIENT_URL }));
+// Dynamically reflect origin to support localhost, 127.0.0.1, and webhook simulators
+app.use(cors({
+  origin: true,
+  credentials: true,
+}));
 
 // Raw body parser for HMAC verification (must come before json parser)
 app.use('/api/v1/ingest', express.raw({ type: '*/*', limit: '10mb' }));
