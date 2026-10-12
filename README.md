@@ -121,7 +121,8 @@ You can run automated test webhooks directly to see events stream live into the 
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Service health status |
+| `GET` | `/` | Backend landing & status dashboard |
+| `GET` | `/health` / `/api/v1/health` | Service health status check |
 | `POST` | `/api/v1/ingest/:endpointId` | High-speed webhook ingest (returns 202) |
 | `GET` | `/api/v1/endpoints` | List all webhook endpoints |
 | `POST` | `/api/v1/endpoints` | Create endpoint (`name`, `hmacSecret`) |
